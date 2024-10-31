@@ -1,0 +1,3 @@
+firstName,lastName,age,gender,combination,level,class,school
+John,Doe,20,Male,Science,Undergraduate,10A,XYZ High School
+Jane,Smith,22,Female,Arts,Postgraduate,12B,ABC University
