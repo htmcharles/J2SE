@@ -3,6 +3,7 @@
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/Lessons" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/Multithreading" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/Work" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/db__connection" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/exercises" vcs="Git" />
