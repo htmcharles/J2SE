@@ -1,84 +1,57 @@
-package oop.javafaker;
+import com.opencsv.CSVReader;
+import com.opencsv.exceptions.CsvValidationException;
 
-import com.github.javafaker.Faker;
-
+import java.io.FileReader;
+import java.io.IOException;
 import java.sql.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
-public class HeavyLoadManagement {
-
-    private static final String DB_URL = "jdbc:mysql://localhost:3306/heavyloadmanagement";
-    private static final String DB_USER = "root";
-    private static final String DB_PASSWORD = "";
-    private static final int RECORD_COUNT = 10_000_000;
-    private static final int THREAD_COUNT = 10;
+public class ImportFromCSV {
+    private static final String URL = "jdbc:postgresql://localhost:5432/heavyloadmanagement";
+    private static final String USER = "postgres"; // Replace with your DB username
+    private static final String PASSWORD = "password"; // Replace with your DB password
+    private static final String INPUT_FILE = "people.csv";
+    private static final String INSERT_QUERY = "INSERT INTO PersonAgain (id, name, email, address, age) VALUES (?, ?, ?, ?, ?)";
 
     public static void main(String[] args) {
-        try {
-            addRecordsToDatabaseConcurrently();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
+        ExecutorService executorService = Executors.newFixedThreadPool(4); // Adjust thread pool size as needed
 
-    private static void addRecordsToDatabaseConcurrently() {
-        ExecutorService executor = Executors.newFixedThreadPool(THREAD_COUNT);
+        try (Connection connection = DriverManager.getConnection(URL, USER, PASSWORD);
+             CSVReader reader = new CSVReader(new FileReader(INPUT_FILE))) {
 
-        for (int i = 0; i < THREAD_COUNT; i++) {
-            executor.execute(() -> {
-                try {
-                    addRecordsToDatabase();
-                } catch (SQLException e) {
-                    e.printStackTrace();
-                }
-            });
-        }
+            connection.setAutoCommit(false); // Disable auto-commit for batch processing
 
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(1, TimeUnit.HOURS)) {
-                System.err.println("Threads didn't finish in the expected time.");
-            }
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
+            // Skip the header row
+            String[] nextLine = reader.readNext();
 
-        System.out.println("Finished inserting records.");
-    }
+            while ((nextLine = reader.readNext()) != null) {
+                String[] record = nextLine;
 
-    private static void addRecordsToDatabase() throws SQLException {
-        Faker faker = new Faker();
-        String insertSQL = "INSERT INTO person (name, email, address, age) VALUES (?, ?, ?, ?)";
-
-        try (Connection connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
-             PreparedStatement preparedStatement = connection.prepareStatement(insertSQL)) {
-
-            connection.setAutoCommit(false);
-
-            for (int i = 0; i < RECORD_COUNT / THREAD_COUNT; i++) {
-                String name = faker.name().fullName();
-                String email = faker.internet().emailAddress();
-                String address = faker.address().fullAddress();
-                int age = faker.number().numberBetween(18, 99);
-
-                preparedStatement.setString(1, name);
-                preparedStatement.setString(2, email);
-                preparedStatement.setString(3, address);
-                preparedStatement.setInt(4, age);
-
-                preparedStatement.addBatch();
-
-                if (i % 1000 == 0) {
-                    preparedStatement.executeBatch();
-                    connection.commit();
-                    System.out.println(Thread.currentThread().getName() + " inserted " + (i + 1) + " records.");
-                }
+                executorService.execute(() -> {
+                    try (PreparedStatement statement = connection.prepareStatement(INSERT_QUERY)) {
+                        statement.setInt(1, Integer.parseInt(record[0])); // ID
+                        statement.setString(2, record[1]); // Name
+                        statement.setString(3, record[2]); // Email
+                        statement.setString(4, record[3]); // Address
+                        statement.setInt(5, Integer.parseInt(record[4])); // Age
+                        statement.executeUpdate();
+                    } catch (SQLException e) {
+                        e.printStackTrace();
+                    }
+                });
             }
 
-            preparedStatement.executeBatch();
-            connection.commit();
+            executorService.shutdown();
+            while (!executorService.isTerminated()) {
+                // Wait for all threads to finish
+            }
+
+            connection.commit(); // Commit all changes to the database
+            System.out.println("Import completed.");
+
+        } catch (IOException | SQLException | CsvValidationException e) {
+            e.printStackTrace();
         }
     }
 }
