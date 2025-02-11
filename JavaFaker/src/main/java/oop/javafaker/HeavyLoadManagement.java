@@ -1,85 +1,98 @@
-package oop.javafaker;
-
 import com.github.javafaker.Faker;
 
 
 import java.sql.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class HeavyLoadManagement {
-
-    private static final String DB_URL = "jdbc:mysql://localhost:3306/heavyloadmanagement";
-    private static final String DB_USER = "root";
-    private static final String DB_PASSWORD = "";
-    private static final int RECORD_COUNT = 10_000_000;
-    private static final int THREAD_COUNT = 10;
+    private static final String DB_URL = "jdbc:postgresql://localhost:5432/heavyloadmanagement"; // PostgreSQL URL
+    private static final String DB_USER = "postgres"; // PostgreSQL username
+    private static final String DB_PASSWORD = "password"; // PostgreSQL password
+    private static final int TOTAL_RECORDS = 10_000_000; // Total records to insert
+    private static final int THREAD_COUNT = 10; // Number of threads
+    private static final AtomicInteger totalRecordsInserted = new AtomicInteger(0); // Tracks total inserted records
 
     public static void main(String[] args) {
-        try {
-            addRecordsToDatabaseConcurrently();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
+        long startTime = System.currentTimeMillis(); // Record the start time
+        ExecutorService executorService = Executors.newFixedThreadPool(THREAD_COUNT);
+        int recordsPerThread = TOTAL_RECORDS / THREAD_COUNT;
 
-    private static void addRecordsToDatabaseConcurrently() {
-        ExecutorService executor = Executors.newFixedThreadPool(THREAD_COUNT);
-
-        for (int i = 0; i < THREAD_COUNT; i++) {
-            executor.execute(() -> {
+        // Start progress display thread
+        Thread progressThread = new Thread(() -> {
+            while (totalRecordsInserted.get() < TOTAL_RECORDS) {
                 try {
-                    addRecordsToDatabase();
-                } catch (SQLException e) {
+                    Thread.sleep(3000); // Wait for 3 seconds
+                    int inserted = totalRecordsInserted.get();
+                    System.out.println("Inserted " + inserted + " records so far out of " + TOTAL_RECORDS + " records.");
+                } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
-            });
-        }
-
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(1, TimeUnit.HOURS)) {
-                System.err.println("Threads didn't finish in the expected time.");
             }
-        } catch (InterruptedException e) {
-            e.printStackTrace();
+        });
+        progressThread.start();
+
+        // Launch threads for data insertion
+        for (int i = 0; i < THREAD_COUNT; i++) {
+            int start = i * recordsPerThread + 1;
+            int end = (i == THREAD_COUNT - 1) ? TOTAL_RECORDS : start + recordsPerThread - 1;
+            executorService.execute(new DataInserter(start, end));
         }
 
-        System.out.println("Finished inserting records.");
+        executorService.shutdown();
+        while (!executorService.isTerminated()) {
+            // Wait for all threads to finish
+        }
+
+        long endTime = System.currentTimeMillis();
+        long elapsedTime = (endTime - startTime) / 1000; // Time in seconds
+        long minutes = elapsedTime / 60;
+        long seconds = elapsedTime % 60;
+        System.out.println("The data insertion process has completed successfully.");
+        System.out.println("Total time for insertion: " + minutes + " minutes and " + seconds + " seconds.");
     }
 
-    private static void addRecordsToDatabase() throws SQLException {
-        Faker faker = new Faker();
-        String insertSQL = "INSERT INTO person (name, email, address, age) VALUES (?, ?, ?, ?)";
+    static class DataInserter implements Runnable {
+        private final int start;
+        private final int end;
 
-        try (Connection connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
-             PreparedStatement preparedStatement = connection.prepareStatement(insertSQL)) {
+        DataInserter(int start, int end) {
+            this.start = start;
+            this.end = end;
+        }
 
-            connection.setAutoCommit(false);
+        @Override
+        public void run() {
+            Faker faker = new Faker();
+            String insertSQL = "INSERT INTO person (name, email, address, age) VALUES (?, ?, ?, ?)"; // Keeping the 'person' table
 
-            for (int i = 0; i < RECORD_COUNT / THREAD_COUNT; i++) {
-                String name = faker.name().fullName();
-                String email = faker.internet().emailAddress();
-                String address = faker.address().fullAddress();
-                int age = faker.number().numberBetween(18, 99);
+            try (Connection connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+                 PreparedStatement preparedStatement = connection.prepareStatement(insertSQL)) {
+                connection.setAutoCommit(false); // Disable auto-commit for batch processing
 
-                preparedStatement.setString(1, name);
-                preparedStatement.setString(2, email);
-                preparedStatement.setString(3, address);
-                preparedStatement.setInt(4, age);
+                for (int i = start; i <= end; i++) {
+                    preparedStatement.setString(1, faker.name().fullName().replace(",", "")); // Remove commas
+                    preparedStatement.setString(2, faker.internet().emailAddress().replace(",", ""));
+                    preparedStatement.setString(3, faker.address().streetAddress().replace(",", ""));
+                    preparedStatement.setInt(4, faker.number().numberBetween(18, 99)); // Random age between 18 and 99
+                    preparedStatement.addBatch();
 
-                preparedStatement.addBatch();
+                    if (i % 10_000 == 0) {
+                        preparedStatement.executeBatch(); // Execute batch every 10,000 records
+                        connection.commit(); // Commit the transaction after each batch
+                    }
 
-                if (i % 1000 == 0) {
-                    preparedStatement.executeBatch();
-                    connection.commit();
-                    System.out.println(Thread.currentThread().getName() + " inserted " + (i + 1) + " records.");
+                    // Update the total inserted records count
+                    totalRecordsInserted.incrementAndGet();
                 }
-            }
 
-            preparedStatement.executeBatch();
-            connection.commit();
+                preparedStatement.executeBatch(); // Execute remaining records
+                connection.commit();  // Commit the final batch
+                System.out.println("Thread " + Thread.currentThread().getName() + " successfully inserted records from " + start + " to " + end);
+
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
     }
 }
